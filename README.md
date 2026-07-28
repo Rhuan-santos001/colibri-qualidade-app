@@ -119,4 +119,3 @@ gestao-qualidade/
 - Login e controle de usuários (o Power App não tinha).
 - Dados de setor/recurso centralizados no banco, então atualizar uma
   máquina não exige nova publicação do app.
-# colibri-inspe-o-app
