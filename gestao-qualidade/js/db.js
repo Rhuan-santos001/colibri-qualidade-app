@@ -1,0 +1,141 @@
+// =====================================================================
+// CAMADA DE ACESSO AO SUPABASE
+// =====================================================================
+const supa = window.supabase.createClient(
+  window.APP_CONFIG.SUPABASE_URL,
+  window.APP_CONFIG.SUPABASE_ANON_KEY
+);
+
+const DB = {
+  // ---------------- AUTENTICAÇÃO ----------------
+  async login(usuario, senha) {
+    const { data, error } = await supa.rpc("app_login", {
+      p_usuario: usuario,
+      p_senha: senha,
+    });
+    if (error) throw error;
+    return data && data.length ? data[0] : null;
+  },
+
+  async criarUsuario(admin, novo) {
+    const { data, error } = await supa.rpc("app_criar_usuario", {
+      p_admin_usuario: admin.usuario,
+      p_admin_senha: admin.senha,
+      p_novo_usuario: novo.usuario,
+      p_novo_senha: novo.senha,
+      p_novo_nome: novo.nome,
+      p_novo_perfil: novo.perfil,
+    });
+    if (error) throw error;
+    return data && data.length ? data[0] : { ok: false, mensagem: "Erro desconhecido." };
+  },
+
+  async listarUsuarios(admin) {
+    const { data, error } = await supa.rpc("app_listar_usuarios", {
+      p_admin_usuario: admin.usuario,
+      p_admin_senha: admin.senha,
+    });
+    if (error) throw error;
+    return data || [];
+  },
+
+  async atualizarUsuario(admin, usuarioId, { ativo, novaSenha }) {
+    const { data, error } = await supa.rpc("app_atualizar_usuario", {
+      p_admin_usuario: admin.usuario,
+      p_admin_senha: admin.senha,
+      p_usuario_id: usuarioId,
+      p_ativo: ativo ?? null,
+      p_nova_senha: novaSenha ?? null,
+    });
+    if (error) throw error;
+    return data && data.length ? data[0] : { ok: false, mensagem: "Erro desconhecido." };
+  },
+
+  // ---------------- SETORES / RECURSOS ----------------
+  async setores() {
+    const { data, error } = await supa.from("setores").select("*").order("nome");
+    if (error) throw error;
+    return data || [];
+  },
+
+  async recursosPorSetor(setorId) {
+    if (!setorId) return [];
+    const { data, error } = await supa
+      .from("recursos")
+      .select("*")
+      .eq("setor_id", setorId)
+      .order("codigo");
+    if (error) throw error;
+    return data || [];
+  },
+
+  // ---------------- LOTES / PEÇAS (buscados por número, cadastrados no Supabase) ----------------
+  async buscarLote(numeroLote) {
+    if (!numeroLote) return null;
+    const { data, error } = await supa
+      .from("lotes")
+      .select("*")
+      .eq("numero_lote", numeroLote.trim())
+      .limit(1);
+    if (error) throw error;
+    return data && data.length ? data[0] : null;
+  },
+
+  // ---------------- ANEXOS ----------------
+  async upload(file, pasta) {
+    const nomeArquivo = `${pasta}/${Date.now()}_${file.name.replace(/\s+/g, "_")}`;
+    const { error } = await supa.storage.from("anexos").upload(nomeArquivo, file);
+    if (error) throw error;
+    const { data } = supa.storage.from("anexos").getPublicUrl(nomeArquivo);
+    return { nome: file.name, url: data.publicUrl };
+  },
+
+  // ---------------- INSPEÇÕES ----------------
+  async criarInspecao(payload) {
+    const { data, error } = await supa.from("inspecoes").insert(payload).select().single();
+    if (error) throw error;
+    return data;
+  },
+
+  async listarInspecoes({ setorId, busca } = {}) {
+    let q = supa
+      .from("inspecoes")
+      .select("*, setores:setor_id(nome), recursos:recurso_id(codigo,nome)")
+      .order("criado_em", { ascending: false })
+      .limit(100);
+    if (setorId) q = q.eq("setor_id", setorId);
+    if (busca) q = q.ilike("numero_lote", `%${busca}%`);
+    const { data, error } = await q;
+    if (error) throw error;
+    return data || [];
+  },
+
+  // ---------------- FCA ----------------
+  async criarFca(payload) {
+    const { data, error } = await supa.from("fca").insert(payload).select().single();
+    if (error) throw error;
+    return data;
+  },
+
+  async listarFcaPendentes() {
+    const { data, error } = await supa
+      .from("fca")
+      .select(
+        "*, encontrado:setor_encontrado_id(nome), origem:setor_origem_id(nome)"
+      )
+      .eq("status", "Pendente")
+      .order("criado_em", { ascending: false });
+    if (error) throw error;
+    return data || [];
+  },
+
+  async concluirFca(fcaId, payload) {
+    const { data, error } = await supa
+      .from("fca_retorno")
+      .insert({ fca_id: fcaId, ...payload })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+};
