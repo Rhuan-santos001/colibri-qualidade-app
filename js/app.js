@@ -104,10 +104,38 @@ function shell(innerHtml, { title, subtitle, back } = {}) {
   `;
 }
 
+function configPendente() {
+  const c = window.APP_CONFIG || {};
+  return !c.SUPABASE_URL || !c.SUPABASE_ANON_KEY || c.SUPABASE_URL.includes("SEU-PROJETO") || c.SUPABASE_ANON_KEY.includes("AQUI");
+}
+
+function screenConfigMissing() {
+  App.innerHTML = `
+    <div class="login-screen">
+      <div class="login-brand">Configuração necessária</div>
+      <div class="login-title">Gestão da<br/>Qualidade</div>
+      <div class="login-card">
+        <p style="margin-top:0;">O app ainda não foi conectado ao Supabase.</p>
+        <p style="font-size:13.5px;color:var(--ink-soft);">
+          Abra o arquivo <code>js/config.js</code> e preencha
+          <code>SUPABASE_URL</code> e <code>SUPABASE_ANON_KEY</code> com os
+          dados do seu projeto (Project Settings → API no painel do
+          Supabase). Depois disso, rode o SQL da pasta <code>sql/</code>
+          (se ainda não rodou) e recarregue esta página.
+        </p>
+      </div>
+    </div>
+  `;
+}
+
 // ---------------------------------------------------------------------
 // LOGIN
 // ---------------------------------------------------------------------
 function screenLogin() {
+  if (configPendente()) {
+    screenConfigMissing();
+    return;
+  }
   App.innerHTML = `
     <div class="login-screen">
       <div class="login-brand">Painel de qualidade</div>
@@ -150,7 +178,8 @@ function screenLogin() {
       navigate("home");
     } catch (err) {
       console.error(err);
-      document.getElementById("login-error").innerHTML = `<div class="login-error">Não foi possível conectar ao Supabase. Verifique js/config.js.</div>`;
+      const detalhe = err?.message ? ` (${err.message})` : "";
+      document.getElementById("login-error").innerHTML = `<div class="login-error">Não foi possível conectar ao Supabase${detalhe}. Confira a URL/chave em js/config.js e se o SQL da pasta sql/ já foi executado.</div>`;
       btn.disabled = false;
       btn.textContent = "Entrar";
     }
@@ -250,14 +279,18 @@ function screenInspecao() {
         <div class="field">
           <label>Nº Lote<span class="req">*</span></label>
           <input class="mono" type="text" id="numero_lote" value="${d.numero_lote}" required />
+          <div class="hint" id="lote-hint"></div>
         </div>
         <div class="field">
           <label>Ordem de fabricação<span class="req">*</span></label>
-          <input class="mono" type="text" id="ordem_fabricacao" value="${d.ordem_fabricacao}" required />
+          <div id="ordem-field-wrap">
+            <input class="mono" type="text" id="ordem_fabricacao" value="${d.ordem_fabricacao}" required />
+          </div>
         </div>
         <div class="field">
           <label>Código da Peça<span class="req">*</span></label>
           <input class="mono" type="text" id="codigo_peca" value="${d.codigo_peca}" required />
+          <div class="hint" id="peca-hint"></div>
         </div>
         <div class="field">
           <label>Tipo de processo</label>
@@ -280,11 +313,86 @@ function screenInspecao() {
     App.innerHTML = shell(html, { title: "Inspeção de Qualidade", subtitle: `Inspetor: ${State.session.nome} · ${fmtDataHora()}` });
 
     bindRadios();
+
+    const loteInput = document.getElementById("numero_lote");
+    const loteHint = document.getElementById("lote-hint");
+    const ordemWrap = document.getElementById("ordem-field-wrap");
+    const pecaInput = document.getElementById("codigo_peca");
+    const pecaHint = document.getElementById("peca-hint");
+
+    function ordemComoTexto() {
+      ordemWrap.innerHTML = `<input class="mono" type="text" id="ordem_fabricacao" value="${d.ordem_fabricacao || ""}" required />`;
+    }
+
+    function bindOrdemSelect(ordens) {
+      const select = document.getElementById("ordem_fabricacao");
+      select.addEventListener("change", (e) => {
+        const opt = e.target.selectedOptions[0];
+        const codigoPeca = opt ? opt.dataset.peca : "";
+        if (codigoPeca) {
+          pecaInput.value = codigoPeca;
+          d.codigo_peca = codigoPeca;
+          pecaHint.textContent = "Preenchida automaticamente a partir da ordem selecionada.";
+        } else {
+          pecaHint.textContent = "";
+        }
+      });
+    }
+
+    let loteDebounce;
+    async function buscarOrdensDoLote() {
+      const numero = loteInput.value.trim();
+      d.lote_id = null;
+      pecaHint.textContent = "";
+      if (!numero) {
+        loteHint.textContent = "";
+        ordemComoTexto();
+        return;
+      }
+      loteHint.textContent = "Buscando lote...";
+      try {
+        const lote = await DB.buscarLotePorNumero(numero);
+        if (!lote) {
+          loteHint.textContent = "Lote não encontrado na base — informe a ordem e a peça manualmente.";
+          ordemComoTexto();
+          return;
+        }
+        d.lote_id = lote.id;
+        const ordens = await DB.ordensPorLote(lote.id);
+        if (!ordens.length) {
+          loteHint.textContent = "Nenhuma ordem importada para este lote ainda — informe manualmente.";
+          ordemComoTexto();
+          return;
+        }
+        loteHint.textContent = `${ordens.length} ordem(ns) encontrada(s) para este lote.`;
+        ordemWrap.innerHTML = `
+          <select id="ordem_fabricacao" required>
+            <option value="">Selecione a ordem...</option>
+            ${ordens
+              .map(
+                (o) =>
+                  `<option value="${o.numero}" data-peca="${o.pecas?.codigo || ""}" ${d.ordem_fabricacao === o.numero ? "selected" : ""}>${o.numero}</option>`
+              )
+              .join("")}
+          </select>`;
+        bindOrdemSelect(ordens);
+      } catch (err) {
+        console.error(err);
+        loteHint.textContent = "Erro ao buscar o lote — informe a ordem manualmente.";
+        ordemComoTexto();
+      }
+    }
+    loteInput.addEventListener("input", () => {
+      clearTimeout(loteDebounce);
+      loteDebounce = setTimeout(buscarOrdensDoLote, 450);
+    });
+    if (d.numero_lote) buscarOrdensDoLote();
+
     document.getElementById("f1").addEventListener("submit", (e) => {
       e.preventDefault();
-      d.numero_lote = document.getElementById("numero_lote").value.trim();
+      d.numero_lote = loteInput.value.trim();
       d.ordem_fabricacao = document.getElementById("ordem_fabricacao").value.trim();
-      d.codigo_peca = document.getElementById("codigo_peca").value.trim();
+      d.codigo_peca = pecaInput.value.trim();
       d.descricao = document.getElementById("descricao").value.trim();
       navigate("inspecao", { step: 2, data: d });
     });
@@ -903,6 +1011,10 @@ const SCREENS = {
 };
 
 function render() {
+  if (configPendente()) {
+    screenConfigMissing();
+    return;
+  }
   if (!State.session) {
     State.route = "login";
     screenLogin();

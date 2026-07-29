@@ -33,6 +33,9 @@ substituindo o Power App atual. 100% estático — feito para rodar no
    3. `03_funcoes_auth.sql` (cria as funções de login/senha e o usuário
       administrador inicial)
    4. `04_storage.sql` (cria o bucket `anexos`)
+   5. `05_lotes_ordens_pecas.sql` (recria `lotes`/`pecas` normalizadas e
+      cria `ordens`, a tabela que liga Lote → Ordem → Peça e permite o
+      preenchimento automático da peça no app)
 
    Ou rode tudo de uma vez com `00_TUDO_EM_UM.sql`.
 
@@ -44,9 +47,11 @@ substituindo o Power App atual. 100% estático — feito para rodar no
    em Configurações → (crie seu usuário definitivo e desative o `admin`,
    ou apenas gere uma nova senha por ele).
 
-4. **Lotes e Peças**: as tabelas `lotes` e `pecas` ficam vazias de
-   propósito — preencha pelo **Table Editor** do Supabase ou importando
-   um CSV, como você pediu.
+4. **Lotes, Ordens e Peças**: essas três tabelas ficam vazias depois do
+   SQL — quem as preenche é o script `scripts/atualizar_lotes_ordens_pecas.py`,
+   rodado (manualmente ou por agendamento) toda vez que você exporta o
+   relatório do ERP. Veja a seção **"Importação diária de Lote/Ordem/Peça"**
+   abaixo.
 
 ### Por que não usei o Supabase Auth?
 
@@ -91,7 +96,52 @@ Esses dados estão em **Project Settings → API** no painel do Supabase
 3. Aguarde alguns minutos — o site fica disponível em
    `https://SEU-USUARIO.github.io/NOME-DO-REPOSITORIO/`.
 
-## Estrutura de arquivos
+## Importação diária de Lote / Ordem / Peça
+
+O relatório do seu ERP relaciona **Lote → Ordem de fabricação → Código
+da Peça** (cada ordem pertence a um único lote e aponta para uma única
+peça). O script `scripts/atualizar_lotes_ordens_pecas.py`:
+
+1. Lê o relatório do dia (HTML salvo como `.xls`, ex.: `2707.xls`).
+2. Filtra só as linhas cuja observação contém `ORDEM GERADA PELO LOTE`
+   (garante que a peça realmente pertence àquele lote).
+3. Sincroniza no Supabase as tabelas `lotes`, `pecas` e `ordens`
+   (upsert — não duplica, e atualiza o lote/peça de uma ordem se ela
+   mudar de um dia pro outro).
+
+### Como rodar
+
+```bash
+cd scripts
+pip install -r requirements.txt
+cp .env.example .env
+# edite o .env com a SUPABASE_URL e a SUPABASE_SERVICE_KEY
+# (Project Settings > API > service_role secret — NUNCA a anon key,
+#  e NUNCA coloque essa chave no site/GitHub Pages)
+
+python atualizar_lotes_ordens_pecas.py --dry-run   # confere antes de gravar
+python atualizar_lotes_ordens_pecas.py             # grava de verdade
+```
+
+Por padrão ele procura `ddmm.xls` (o arquivo de hoje) na pasta atual;
+dá pra apontar um arquivo específico ou outra pasta — veja
+`python atualizar_lotes_ordens_pecas.py --help`.
+
+**Coluna da Ordem:** o script tenta achar a coluna pelo nome (`ORDEM`,
+`Nº ORDEM`, `OP`, etc.). Se o seu relatório usar outro nome, ele avisa
+e cai para a primeira coluna do relatório como fallback — rode com
+`--dry-run` na primeira vez pra conferir se pegou a coluna certa; se
+não pegou, ajuste `NOMES_COL_ORDEM` ou `COL_ORDEM_POSICAO` no topo do
+script.
+
+### Como isso aparece no app
+
+Na tela **Cadastro de Inspeção**, ao digitar o **Nº Lote**, o app busca
+no Supabase e, se encontrar, troca o campo **Ordem de fabricação** por
+uma lista com as ordens daquele lote. Ao escolher a ordem, o **Código
+da Peça** é preenchido sozinho (mas continua editável, caso precise
+corrigir). Se o lote ainda não tiver sido importado, os campos
+continuam como texto livre, do jeito que já funcionava antes.
 
 ```
 gestao-qualidade/
@@ -106,7 +156,12 @@ gestao-qualidade/
 │   ├── 01_schema.sql
 │   ├── 02_seed_setores_recursos.sql
 │   ├── 03_funcoes_auth.sql
-│   └── 04_storage.sql
+│   ├── 04_storage.sql
+│   └── 05_lotes_ordens_pecas.sql
+├── scripts/
+│   ├── atualizar_lotes_ordens_pecas.py
+│   ├── requirements.txt
+│   └── .env.example
 └── README.md
 ```
 

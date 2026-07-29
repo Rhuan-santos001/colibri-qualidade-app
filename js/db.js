@@ -69,16 +69,27 @@ const DB = {
     return data || [];
   },
 
-  // ---------------- LOTES / PEÇAS (buscados por número, cadastrados no Supabase) ----------------
-  async buscarLote(numeroLote) {
+  // ---------------- LOTES / ORDENS / PEÇAS (importados diariamente pelo script) ----------------
+  async buscarLotePorNumero(numeroLote) {
     if (!numeroLote) return null;
     const { data, error } = await supa
       .from("lotes")
       .select("*")
-      .eq("numero_lote", numeroLote.trim())
+      .eq("numero", numeroLote.trim())
       .limit(1);
     if (error) throw error;
     return data && data.length ? data[0] : null;
+  },
+
+  async ordensPorLote(loteId) {
+    if (!loteId) return [];
+    const { data, error } = await supa
+      .from("ordens")
+      .select("id, numero, peca_id, pecas:peca_id(codigo)")
+      .eq("lote_id", loteId)
+      .order("numero");
+    if (error) throw error;
+    return data || [];
   },
 
   // ---------------- ANEXOS ----------------
