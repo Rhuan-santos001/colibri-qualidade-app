@@ -8,13 +8,26 @@ substituindo o Power App atual. 100% estático — feito para rodar no
 
 - **Login** — usuário e senha próprios do sistema.
 - **Início** — boas-vindas, atalhos e contador de FCAs pendentes.
-- **Cadastro de Inspeção** — Nº lote, ordem de fabricação, código da peça,
-  tipo de processo (Máquina/Pulmão), descrição, setor, recurso/máquina
-  (carregado a partir do setor escolhido), anexos e resultado
-  Conforme/Não Conforme.
-- **Cadastro FCA** — abrir FCA (sim/não), setor encontrado, setor de
-  origem, operador, quantidade de peças, como foi identificado, detalhes
-  do problema e anexos.
+- **Cadastro de Inspeção** — passo 1: Setor, Tipo de processo (Máquina/
+  Pulmão — se Pulmão, mostra uma caixa dizendo a qual setor ele se
+  refere), Recurso/Máquina (se Máquina), Nº Lote, Ordem de fabricação
+  (lista as ordens do lote escolhido) e Código da Peça (preenchido
+  sozinho a partir da ordem). **Regra:** por Recurso, uma Ordem só pode
+  ser inspecionada uma vez — se já houver inspeção para aquele par
+  Recurso+Ordem, o app avisa e bloqueia o "Continuar". Passo 2: anexos,
+  resultado Conforme/Não Conforme e **"Abrir FCA para esta peça?"** — se
+  marcar "Sim", ao salvar a inspeção o app já leva direto para o
+  Cadastro FCA com o lote/ordem/peça/setor preenchidos.
+- **Cadastro FCA** — abrir FCA (sim/não — some quando a FCA já veio
+  vinculada de uma inspeção, mostrando uma caixa com o lote/ordem/peça
+  em vez disso), setor encontrado, setor de origem, operador,
+  quantidade de peças, como foi identificado, detalhes do problema e
+  anexos.
+- **Painel** — dashboard de Inspeções e FCA, com filtro por Setor,
+  período de datas e Tipo (Recurso/Máquina — com opção de restringir a
+  um recurso específico — ou Pulmão). Mostra totais, taxa de não
+  conformidade, FCAs pendentes/concluídas e um ranking de inspeções por
+  setor.
 - **Retorno FCA** — lista as FCAs com status "Pendente"; ao tocar em uma,
   abre o formulário de causa raiz / ação corretiva / responsável e marca
   a FCA como "Concluída".
@@ -36,6 +49,10 @@ substituindo o Power App atual. 100% estático — feito para rodar no
    5. `05_lotes_ordens_pecas.sql` (recria `lotes`/`pecas` normalizadas e
       cria `ordens`, a tabela que liga Lote → Ordem → Peça e permite o
       preenchimento automático da peça no app)
+   6. `08_regra_unica_inspecao.sql` (trava no banco: por Recurso, uma
+      Ordem só pode ser inspecionada uma vez)
+   7. `09_fca_peca_especifica.sql` (adiciona lote/ordem/peça na FCA, para
+      quando ela é aberta direto de uma inspeção)
 
    Ou rode tudo de uma vez com `00_TUDO_EM_UM.sql`.
 
@@ -176,13 +193,23 @@ gestao-qualidade/
 │   ├── 04_storage.sql
 │   ├── 05_lotes_ordens_pecas.sql
 │   ├── 06_fix_pgcrypto.sql   <- patch, só use se já rodou o SQL antes
-│   └── 07_fix_grants.sql     <- patch, só use se já rodou o SQL antes
+│   ├── 07_fix_grants.sql     <- patch, só use se já rodou o SQL antes
+│   ├── 08_regra_unica_inspecao.sql
+│   └── 09_fca_peca_especifica.sql
 ├── scripts/
 │   ├── atualizar_lotes_ordens_pecas.py
 │   ├── requirements.txt
 │   └── .env.example
 └── README.md
 ```
+
+## Sobre o Painel (dashboard)
+
+Os números são calculados no navegador a partir dos registros que
+batem com o filtro (até 3000 linhas por consulta). Para o volume normal
+de uma fábrica isso é tranquilo; se um dia o histórico crescer muito e
+os filtros de data não estreitarem o suficiente, vale migrar esse
+cálculo para uma view/RPC no Postgres (eu ajudo quando chegar lá).
 
 ## Melhorias em relação ao Power App atual
 

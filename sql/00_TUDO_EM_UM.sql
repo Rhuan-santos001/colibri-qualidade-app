@@ -537,3 +537,28 @@ create policy "leitura publica ordens" on public.ordens for select using (true);
 
 grant usage on schema public to anon, authenticated;
 grant select on public.lotes, public.pecas, public.ordens to anon, authenticated;
+-- =====================================================================
+-- REGRA: por Recurso (máquina), uma Ordem só pode ser inspecionada 1 vez
+-- =====================================================================
+-- O app já bloqueia isso na tela (verifica antes de deixar continuar),
+-- mas essa trava no banco garante a regra mesmo se dois inspetores
+-- tentarem salvar a mesma ordem/recurso ao mesmo tempo. Não se aplica
+-- a inspeções tipo "Pulmão" (recurso_id fica nulo nesse caso).
+
+create unique index if not exists uniq_inspecao_recurso_ordem
+  on public.inspecoes (recurso_id, ordem_fabricacao)
+  where recurso_id is not null;
+-- =====================================================================
+-- FCA vinculada à peça/lote/ordem da inspeção que a originou
+-- =====================================================================
+-- Antes, a FCA só guardava inspecao_id (uuid). Agora também guarda o
+-- lote/ordem/peça em texto direto na FCA — assim ela some sozinha na
+-- tela mesmo se um dia a inspeção for apagada, e fica fácil de
+-- filtrar/consultar sem precisar de join.
+
+alter table public.fca
+  add column if not exists numero_lote      text,
+  add column if not exists ordem_fabricacao text,
+  add column if not exists codigo_peca      text;
+
+create index if not exists idx_fca_ordem on public.fca (ordem_fabricacao);

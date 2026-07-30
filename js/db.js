@@ -112,6 +112,18 @@ const DB = {
   },
 
   // ---------------- INSPEÇÕES ----------------
+  async inspecaoExistente(recursoId, ordemNumero) {
+    if (!recursoId || !ordemNumero) return null;
+    const { data, error } = await supa
+      .from("inspecoes")
+      .select("id, criado_em, inspetor_nome, conforme")
+      .eq("recurso_id", recursoId)
+      .eq("ordem_fabricacao", ordemNumero)
+      .limit(1);
+    if (error) throw error;
+    return data && data.length ? data[0] : null;
+  },
+
   async criarInspecao(payload) {
     const { data, error } = await supa.from("inspecoes").insert(payload).select().single();
     if (error) throw error;
@@ -158,5 +170,36 @@ const DB = {
       .single();
     if (error) throw error;
     return data;
+  },
+
+  // ---------------- DASHBOARD ----------------
+  async dashboardInspecoes({ setorId, tipoProcesso, recursoId, dataInicio, dataFim } = {}) {
+    let q = supa
+      .from("inspecoes")
+      .select("id, setor_id, recurso_id, tipo_processo, conforme, criado_em, setores:setor_id(nome), recursos:recurso_id(codigo,nome)")
+      .order("criado_em", { ascending: false })
+      .limit(3000);
+    if (setorId) q = q.eq("setor_id", setorId);
+    if (tipoProcesso) q = q.eq("tipo_processo", tipoProcesso);
+    if (recursoId) q = q.eq("recurso_id", recursoId);
+    if (dataInicio) q = q.gte("criado_em", dataInicio);
+    if (dataFim) q = q.lte("criado_em", dataFim);
+    const { data, error } = await q;
+    if (error) throw error;
+    return data || [];
+  },
+
+  async dashboardFca({ setorId, dataInicio, dataFim } = {}) {
+    let q = supa
+      .from("fca")
+      .select("id, setor_encontrado_id, status, criado_em, setores:setor_encontrado_id(nome)")
+      .order("criado_em", { ascending: false })
+      .limit(3000);
+    if (setorId) q = q.eq("setor_encontrado_id", setorId);
+    if (dataInicio) q = q.gte("criado_em", dataInicio);
+    if (dataFim) q = q.lte("criado_em", dataFim);
+    const { data, error } = await q;
+    if (error) throw error;
+    return data || [];
   },
 };

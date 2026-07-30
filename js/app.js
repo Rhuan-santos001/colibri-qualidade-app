@@ -88,6 +88,7 @@ const NAV_ITEMS = [
   { route: "fca", label: "FCA", icon: "▲" },
   { route: "retorno", label: "Retorno", icon: "↺" },
   { route: "consulta", label: "Consulta", icon: "⌕" },
+  { route: "dashboard", label: "Painel", icon: "▥" },
 ];
 
 function shell(innerHtml, { title, subtitle, back } = {}) {
@@ -282,21 +283,59 @@ function screenInspecao() {
     descricao: "",
     setor_id: "",
     recurso_id: "",
+    lote_id: null,
     conforme: true,
+    abrir_fca: false,
     anexos: [],
   });
 
   let html = `<div class="step-track"><div class="${step >= 1 ? "done" : ""}"></div><div class="${step >= 2 ? "done" : ""}"></div></div>`;
 
   if (step === 1) {
-    ensureLotes().then(renderStep1);
+    Promise.all([ensureSetores(), ensureLotes()]).then(renderStep1);
     return;
   }
 
   function renderStep1() {
     const lotes = State.lotes || [];
+    const setorAtual = State.setores.find((s) => String(s.id) === String(d.setor_id));
+
     html += `
       <form id="f1">
+        <div class="field">
+          <label>Setor<span class="req">*</span></label>
+          <select id="setor_id" required>
+            <option value="">Selecione...</option>
+            ${State.setores.map((s) => `<option value="${s.id}" ${String(d.setor_id) === String(s.id) ? "selected" : ""}>${s.nome}</option>`).join("")}
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Tipo de processo</label>
+          <div class="radio-group">
+            <label class="radio-option ${d.tipo_processo === "Maquina" ? "checked" : ""}">
+              <input type="radio" name="tipo_processo" value="Maquina" ${d.tipo_processo === "Maquina" ? "checked" : ""}/> Máquina
+            </label>
+            <label class="radio-option ${d.tipo_processo === "Pulmao" ? "checked" : ""}">
+              <input type="radio" name="tipo_processo" value="Pulmao" ${d.tipo_processo === "Pulmao" ? "checked" : ""}/> Pulmão
+            </label>
+          </div>
+
+          <div id="recurso-wrap" style="${d.tipo_processo === "Pulmao" ? "display:none;" : ""}margin-top:14px;">
+            <label>Recurso / Máquina<span class="req">*</span></label>
+            <select id="recurso_id"><option value="">Selecione o setor primeiro</option></select>
+          </div>
+
+          <div id="pulmao-info" style="${d.tipo_processo === "Pulmao" ? "" : "display:none;"}">
+            <div class="info-box">
+              <span>🛈</span>
+              <span><b>Inspeção de Pulmão</b>Referente ao setor: <b>${setorAtual ? setorAtual.nome : "selecione o setor acima"}</b></span>
+            </div>
+          </div>
+        </div>
+
+        <div id="duplicidade-alerta"></div>
+
         <div class="field">
           <label>Nº Lote<span class="req">*</span></label>
           <select id="numero_lote" required>
@@ -322,30 +361,62 @@ function screenInspecao() {
           <div class="hint">Preenchido automaticamente ao escolher a ordem.</div>
         </div>
         <div class="field">
-          <label>Tipo de processo</label>
-          <div class="radio-group">
-            <label class="radio-option ${d.tipo_processo === "Maquina" ? "checked" : ""}">
-              <input type="radio" name="tipo_processo" value="Maquina" ${d.tipo_processo === "Maquina" ? "checked" : ""}/> Máquina
-            </label>
-            <label class="radio-option ${d.tipo_processo === "Pulmao" ? "checked" : ""}">
-              <input type="radio" name="tipo_processo" value="Pulmao" ${d.tipo_processo === "Pulmao" ? "checked" : ""}/> Pulmão
-            </label>
-          </div>
-        </div>
-        <div class="field">
           <label>Descrição</label>
           <textarea id="descricao">${d.descricao}</textarea>
         </div>
-        <div class="btn-row"><button class="btn btn-primary" type="submit">Continuar</button></div>
+        <div class="btn-row"><button class="btn btn-primary" type="submit" id="btn-continuar">Continuar</button></div>
       </form>
     `;
     App.innerHTML = shell(html, { title: "Inspeção de Qualidade", subtitle: `Inspetor: ${State.session.nome} · ${fmtDataHora()}` });
 
-    bindRadios();
+    bindRadios(() => {
+      const pulmao = d.tipo_processo === "Pulmao";
+      document.getElementById("recurso-wrap").style.display = pulmao ? "none" : "block";
+      document.getElementById("pulmao-info").style.display = pulmao ? "block" : "none";
+      if (pulmao) {
+        d.recurso_id = "";
+        const rs = document.getElementById("recurso_id");
+        if (rs) rs.value = "";
+      }
+      checarDuplicidade();
+    });
 
+    const setorSelect = document.getElementById("setor_id");
+    const recursoSelect = document.getElementById("recurso_id");
     const loteSelect = document.getElementById("numero_lote");
     const ordemSelect = document.getElementById("ordem_fabricacao");
     const pecaInput = document.getElementById("codigo_peca");
+    const btnContinuar = document.getElementById("btn-continuar");
+    const alertaBox = document.getElementById("duplicidade-alerta");
+
+    async function carregarRecursos(setorId, selecionado) {
+      recursoSelect.innerHTML = `<option value="">Carregando...</option>`;
+      try {
+        const recursos = (State.recursosCache[setorId] ||= await DB.recursosPorSetor(setorId));
+        recursoSelect.innerHTML =
+          `<option value="">Selecione...</option>` +
+          recursos.map((r) => `<option value="${r.id}" ${String(selecionado) === String(r.id) ? "selected" : ""}>${r.codigo} - ${r.nome}</option>`).join("");
+      } catch (e) {
+        recursoSelect.innerHTML = `<option value="">Erro ao carregar</option>`;
+      }
+    }
+    if (d.setor_id) carregarRecursos(d.setor_id, d.recurso_id);
+
+    setorSelect.addEventListener("change", (e) => {
+      d.setor_id = e.target.value;
+      d.recurso_id = "";
+      const nomeSetor = e.target.selectedOptions[0]?.textContent || "selecione o setor acima";
+      const info = document.querySelector("#pulmao-info b:last-child");
+      if (info) info.textContent = d.setor_id ? nomeSetor : "selecione o setor acima";
+      if (d.setor_id) carregarRecursos(d.setor_id);
+      else recursoSelect.innerHTML = `<option value="">Selecione o setor primeiro</option>`;
+      checarDuplicidade();
+    });
+
+    recursoSelect.addEventListener("change", (e) => {
+      d.recurso_id = e.target.value;
+      checarDuplicidade();
+    });
 
     async function carregarOrdens(loteId) {
       ordemSelect.disabled = true;
@@ -374,7 +445,6 @@ function screenInspecao() {
         ordemSelect.innerHTML = `<option value="">Erro ao carregar ordens</option>`;
       }
     }
-
     if (d.lote_id) carregarOrdens(d.lote_id);
 
     loteSelect.addEventListener("change", (e) => {
@@ -389,6 +459,7 @@ function screenInspecao() {
         ordemSelect.disabled = true;
         ordemSelect.innerHTML = `<option value="">Selecione o lote primeiro</option>`;
       }
+      checarDuplicidade();
     });
 
     ordemSelect.addEventListener("change", (e) => {
@@ -400,10 +471,51 @@ function screenInspecao() {
       if (d.ordem_fabricacao && !codigoPeca) {
         toast("Essa ordem não tem peça vinculada na base — confira a importação.", "error");
       }
+      checarDuplicidade();
     });
+
+    // REGRA: por recurso, a mesma ordem só pode ser inspecionada 1 vez.
+    let duplicidadeCheckId = 0;
+    async function checarDuplicidade() {
+      const meuCheckId = ++duplicidadeCheckId;
+      if (d.tipo_processo !== "Maquina" || !d.recurso_id || !d.ordem_fabricacao) {
+        alertaBox.innerHTML = "";
+        btnContinuar.disabled = false;
+        return;
+      }
+      try {
+        const existente = await DB.inspecaoExistente(d.recurso_id, d.ordem_fabricacao);
+        if (meuCheckId !== duplicidadeCheckId) return; // resposta de uma checagem antiga, ignora
+        if (existente) {
+          alertaBox.innerHTML = `
+            <div class="alert-box">
+              <span>⚠</span>
+              <span><b>Ordem já inspecionada neste recurso</b>
+              Registrada em ${new Date(existente.criado_em).toLocaleString("pt-BR")} por ${existente.inspetor_nome}
+              (${existente.conforme ? "Conforme" : "Não conforme"}). Não é permitido inspecionar a mesma ordem
+              duas vezes no mesmo recurso.</span>
+            </div>`;
+          btnContinuar.disabled = true;
+        } else {
+          alertaBox.innerHTML = "";
+          btnContinuar.disabled = false;
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    checarDuplicidade();
 
     document.getElementById("f1").addEventListener("submit", (e) => {
       e.preventDefault();
+      if (!d.setor_id) {
+        toast("Selecione o setor.", "error");
+        return;
+      }
+      if (d.tipo_processo === "Maquina" && !d.recurso_id) {
+        toast("Selecione o recurso/máquina.", "error");
+        return;
+      }
       if (!d.lote_id) {
         toast("Selecione o lote.", "error");
         return;
@@ -421,24 +533,12 @@ function screenInspecao() {
     });
   }
 
-  // step 2
-  ensureSetores().then(() => renderStep2());
+  // step 2 — anexos e resultado
+  renderStep2();
 
   function renderStep2() {
     html += `
       <form id="f2">
-        <div class="field">
-          <label>Setor<span class="req">*</span></label>
-          <select id="setor_id" required>
-            <option value="">Selecione...</option>
-            ${State.setores.map((s) => `<option value="${s.id}" ${String(d.setor_id) === String(s.id) ? "selected" : ""}>${s.nome}</option>`).join("")}
-          </select>
-        </div>
-        <div class="field">
-          <label>Recurso / Máquina</label>
-          <select id="recurso_id"><option value="">Selecione o setor primeiro</option></select>
-        </div>
-
         <div class="field">
           <label>Anexos</label>
           <div class="attach-box">
@@ -467,6 +567,19 @@ function screenInspecao() {
           </div>
         </div>
 
+        <div class="field">
+          <label>Abrir FCA para esta peça?</label>
+          <div class="hint" style="margin-top:-2px;margin-bottom:10px;">Se marcar "Sim", ao salvar você já vai direto para o cadastro da FCA vinculada a este lote/ordem/peça.</div>
+          <div class="radio-group">
+            <label class="radio-option nao-conforme ${d.abrir_fca ? "checked" : ""}">
+              <input type="radio" name="abrir_fca_insp" value="1" ${d.abrir_fca ? "checked" : ""}/> Sim
+            </label>
+            <label class="radio-option ${!d.abrir_fca ? "checked" : ""}">
+              <input type="radio" name="abrir_fca_insp" value="0" ${!d.abrir_fca ? "checked" : ""}/> Não
+            </label>
+          </div>
+        </div>
+
         <div class="btn-row">
           <button class="btn btn-ghost" type="button" id="btn-voltar">Voltar</button>
           <button class="btn btn-primary" type="submit">Salvar inspeção</button>
@@ -474,26 +587,6 @@ function screenInspecao() {
       </form>
     `;
     App.innerHTML = shell(html, { title: "Inspeção de Qualidade", subtitle: `Inspetor: ${State.session.nome} · ${fmtDataHora()}` });
-
-    const recursoSelect = document.getElementById("recurso_id");
-    async function carregarRecursos(setorId, selecionado) {
-      recursoSelect.innerHTML = `<option value="">Carregando...</option>`;
-      try {
-        const recursos = State.recursosCache[setorId] ||= await DB.recursosPorSetor(setorId);
-        recursoSelect.innerHTML =
-          `<option value="">Nenhum</option>` +
-          recursos.map((r) => `<option value="${r.id}" ${String(selecionado) === String(r.id) ? "selected" : ""}>${r.codigo} - ${r.nome}</option>`).join("");
-      } catch (e) {
-        recursoSelect.innerHTML = `<option value="">Erro ao carregar</option>`;
-      }
-    }
-    if (d.setor_id) carregarRecursos(d.setor_id, d.recurso_id);
-
-    document.getElementById("setor_id").addEventListener("change", (e) => {
-      d.setor_id = e.target.value;
-      carregarRecursos(d.setor_id);
-    });
-    recursoSelect.addEventListener("change", (e) => (d.recurso_id = e.target.value));
 
     document.getElementById("anexo-input").addEventListener("change", async (e) => {
       const file = e.target.files[0];
@@ -510,26 +603,26 @@ function screenInspecao() {
     });
 
     bindRadios(() => {
-      const conforme = document.querySelector('input[name=conforme]:checked').value === "1";
-      d.conforme = conforme;
-      const stampEl = document.getElementById("stamp-preview");
-      stampEl.className = "stamp " + (conforme ? "ok" : "bad");
-      stampEl.innerHTML = conforme ? "Conforme" : "Não<br/>Conforme";
+      const conformeEl = document.querySelector('input[name=conforme]:checked');
+      if (conformeEl) {
+        d.conforme = conformeEl.value === "1";
+        const stampEl = document.getElementById("stamp-preview");
+        stampEl.className = "stamp " + (d.conforme ? "ok" : "bad");
+        stampEl.innerHTML = d.conforme ? "Conforme" : "Não<br/>Conforme";
+      }
+      const fcaEl = document.querySelector('input[name=abrir_fca_insp]:checked');
+      if (fcaEl) d.abrir_fca = fcaEl.value === "1";
     });
 
     document.getElementById("btn-voltar").addEventListener("click", () => navigate("inspecao", { step: 1, data: d }));
 
     document.getElementById("f2").addEventListener("submit", async (e) => {
       e.preventDefault();
-      if (!d.setor_id) {
-        toast("Selecione o setor.", "error");
-        return;
-      }
       const btn = e.target.querySelector("button[type=submit]");
       btn.disabled = true;
       btn.textContent = "Salvando...";
       try {
-        await DB.criarInspecao({
+        const inspecaoCriada = await DB.criarInspecao({
           numero_lote: d.numero_lote,
           ordem_fabricacao: d.ordem_fabricacao,
           codigo_peca: d.codigo_peca,
@@ -543,10 +636,38 @@ function screenInspecao() {
           inspetor_nome: State.session.nome,
         });
         State.inspecoesHoje += 1;
+
+        if (d.abrir_fca) {
+          toast("Inspeção registrada. Complete os dados da FCA.", "success");
+          navigate("fca", {
+            step: 1,
+            data: {
+              abrir_fca: true,
+              inspecao_id: inspecaoCriada.id,
+              numero_lote: d.numero_lote,
+              ordem_fabricacao: d.ordem_fabricacao,
+              codigo_peca: d.codigo_peca,
+              setor_encontrado_id: d.setor_id,
+              setor_origem_id: "",
+              nome_operador: "",
+              quantidade_pecas: "",
+              como_identificado: "",
+              detalhes_problema: "",
+              anexos: [],
+            },
+          });
+          return;
+        }
+
         toast("Inspeção registrada com sucesso.", "success");
         navigate("home");
       } catch (err) {
         console.error(err);
+        if (err?.code === "23505") {
+          toast("Essa ordem já foi inspecionada nesse recurso por outro inspetor há pouco.", "error");
+          navigate("inspecao", { step: 1, data: d });
+          return;
+        }
         toast("Erro ao salvar. Verifique a conexão com o Supabase.", "error");
         btn.disabled = false;
         btn.textContent = "Salvar inspeção";
@@ -575,6 +696,10 @@ function screenFca() {
   const step = State.form.step || 1;
   const d = (State.form.data ||= {
     abrir_fca: true,
+    inspecao_id: null,
+    numero_lote: "",
+    ordem_fabricacao: "",
+    codigo_peca: "",
     setor_encontrado_id: "",
     setor_origem_id: "",
     nome_operador: "",
@@ -583,6 +708,7 @@ function screenFca() {
     detalhes_problema: "",
     anexos: [],
   });
+  const vinculada = !!d.inspecao_id;
 
   if (step === 1) {
     ensureSetores().then(renderStep1);
@@ -591,14 +717,22 @@ function screenFca() {
   function renderStep1() {
     const html = `
       <div class="step-track"><div class="done"></div><div></div></div>
+      ${
+        vinculada
+          ? `<div class="info-box" style="margin-bottom:18px;">
+              <span>🛈</span>
+              <span><b>FCA vinculada a uma peça específica</b>
+              Lote: <b>${d.numero_lote || "—"}</b> · Ordem: <b>${d.ordem_fabricacao || "—"}</b> · Peça: <b>${d.codigo_peca || "—"}</b></span>
+            </div>`
+          : `<div class="field">
+              <label>Abrir FCA?<span class="req">*</span></label>
+              <div class="radio-group">
+                <label class="radio-option ${d.abrir_fca ? "checked" : ""}"><input type="radio" name="abrir_fca" value="1" ${d.abrir_fca ? "checked" : ""}/> Sim</label>
+                <label class="radio-option ${!d.abrir_fca ? "checked" : ""}"><input type="radio" name="abrir_fca" value="0" ${!d.abrir_fca ? "checked" : ""}/> Não</label>
+              </div>
+            </div>`
+      }
       <form id="f1">
-        <div class="field">
-          <label>Abrir FCA?<span class="req">*</span></label>
-          <div class="radio-group">
-            <label class="radio-option ${d.abrir_fca ? "checked" : ""}"><input type="radio" name="abrir_fca" value="1" ${d.abrir_fca ? "checked" : ""}/> Sim</label>
-            <label class="radio-option ${!d.abrir_fca ? "checked" : ""}"><input type="radio" name="abrir_fca" value="0" ${!d.abrir_fca ? "checked" : ""}/> Não</label>
-          </div>
-        </div>
         <div class="field">
           <label>Setor Encontrado</label>
           <select id="setor_encontrado_id">
@@ -628,7 +762,9 @@ function screenFca() {
     bindRadios();
     document.getElementById("f1").addEventListener("submit", (e) => {
       e.preventDefault();
-      d.abrir_fca = document.querySelector('input[name=abrir_fca]:checked').value === "1";
+      if (!vinculada) {
+        d.abrir_fca = document.querySelector('input[name=abrir_fca]:checked').value === "1";
+      }
       d.setor_encontrado_id = document.getElementById("setor_encontrado_id").value;
       d.setor_origem_id = document.getElementById("setor_origem_id").value;
       d.nome_operador = document.getElementById("nome_operador").value.trim();
@@ -698,6 +834,10 @@ function screenFca() {
       btn.textContent = "Salvando...";
       try {
         await DB.criarFca({
+          inspecao_id: d.inspecao_id || null,
+          numero_lote: d.numero_lote || null,
+          ordem_fabricacao: d.ordem_fabricacao || null,
+          codigo_peca: d.codigo_peca || null,
           abrir_fca: d.abrir_fca,
           setor_encontrado_id: d.setor_encontrado_id ? Number(d.setor_encontrado_id) : null,
           setor_origem_id: d.setor_origem_id ? Number(d.setor_origem_id) : null,
@@ -1020,6 +1160,178 @@ function screenConfig() {
 }
 
 // ---------------------------------------------------------------------
+// DASHBOARD (Painel) — Inspeções e FCA, com filtro por setor, período
+// e tipo (Recurso/Máquina ou Pulmão)
+// ---------------------------------------------------------------------
+function screenDashboard() {
+  const f = (State.form.filtros ||= {
+    setorId: "",
+    tipo: "",       // "" | "Maquina" | "Pulmao"
+    recursoId: "",
+    dataInicio: "",
+    dataFim: "",
+  });
+
+  ensureSetores().then(renderFiltros);
+
+  function renderFiltros() {
+    const html = `
+      <div class="filter-panel">
+        <div class="field">
+          <label>Setor</label>
+          <select id="f-setor">
+            <option value="">Todos</option>
+            ${State.setores.map((s) => `<option value="${s.id}" ${String(f.setorId) === String(s.id) ? "selected" : ""}>${s.nome}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field">
+          <label>Tipo</label>
+          <select id="f-tipo">
+            <option value="">Todos (Recurso e Pulmão)</option>
+            <option value="Maquina" ${f.tipo === "Maquina" ? "selected" : ""}>Recurso (Máquina)</option>
+            <option value="Pulmao" ${f.tipo === "Pulmao" ? "selected" : ""}>Pulmão</option>
+          </select>
+        </div>
+        <div class="field" id="f-recurso-wrap" style="${f.tipo === "Maquina" ? "" : "display:none;"}">
+          <label>Recurso específico</label>
+          <select id="f-recurso"><option value="">Todos os recursos</option></select>
+        </div>
+        <div class="filter-grid">
+          <div class="field">
+            <label>De</label>
+            <input type="date" id="f-data-inicio" value="${f.dataInicio}" />
+          </div>
+          <div class="field">
+            <label>Até</label>
+            <input type="date" id="f-data-fim" value="${f.dataFim}" />
+          </div>
+        </div>
+        <button class="btn btn-primary" id="btn-aplicar-filtros" style="margin-bottom:16px;">Aplicar filtros</button>
+      </div>
+      <div id="dashboard-conteudo"><div class="empty-state">Carregando dados...</div></div>
+    `;
+    App.innerHTML = shell(html, { title: "Painel", subtitle: "Inspeções e FCA" });
+
+    const setorSelect = document.getElementById("f-setor");
+    const tipoSelect = document.getElementById("f-tipo");
+    const recursoWrap = document.getElementById("f-recurso-wrap");
+    const recursoSelect = document.getElementById("f-recurso");
+
+    async function carregarRecursosFiltro() {
+      if (!f.setorId) {
+        recursoSelect.innerHTML = `<option value="">Escolha um setor para filtrar por recurso</option>`;
+        return;
+      }
+      recursoSelect.innerHTML = `<option value="">Carregando...</option>`;
+      try {
+        const recursos = (State.recursosCache[f.setorId] ||= await DB.recursosPorSetor(f.setorId));
+        recursoSelect.innerHTML =
+          `<option value="">Todos os recursos</option>` +
+          recursos.map((r) => `<option value="${r.id}" ${String(f.recursoId) === String(r.id) ? "selected" : ""}>${r.codigo} - ${r.nome}</option>`).join("");
+      } catch (e) {
+        recursoSelect.innerHTML = `<option value="">Erro ao carregar</option>`;
+      }
+    }
+    if (f.tipo === "Maquina") carregarRecursosFiltro();
+
+    tipoSelect.addEventListener("change", (e) => {
+      f.tipo = e.target.value;
+      if (f.tipo !== "Maquina") f.recursoId = "";
+      recursoWrap.style.display = f.tipo === "Maquina" ? "block" : "none";
+      if (f.tipo === "Maquina") carregarRecursosFiltro();
+    });
+    setorSelect.addEventListener("change", (e) => {
+      f.setorId = e.target.value;
+      f.recursoId = "";
+      if (f.tipo === "Maquina") carregarRecursosFiltro();
+    });
+    recursoSelect.addEventListener("change", (e) => (f.recursoId = e.target.value));
+
+    document.getElementById("btn-aplicar-filtros").addEventListener("click", () => {
+      f.dataInicio = document.getElementById("f-data-inicio").value;
+      f.dataFim = document.getElementById("f-data-fim").value;
+      carregarDashboard();
+    });
+
+    carregarDashboard();
+  }
+
+  async function carregarDashboard() {
+    const box = document.getElementById("dashboard-conteudo");
+    box.innerHTML = `<div class="empty-state">Carregando dados...</div>`;
+
+    const filtroBase = {
+      setorId: f.setorId || null,
+      dataInicio: f.dataInicio ? `${f.dataInicio}T00:00:00` : null,
+      dataFim: f.dataFim ? `${f.dataFim}T23:59:59` : null,
+    };
+
+    try {
+      const [inspecoes, fcas] = await Promise.all([
+        DB.dashboardInspecoes({ ...filtroBase, tipoProcesso: f.tipo || null, recursoId: f.recursoId || null }),
+        DB.dashboardFca(filtroBase),
+      ]);
+
+      const totalInsp = inspecoes.length;
+      const conformes = inspecoes.filter((i) => i.conforme).length;
+      const naoConformes = totalInsp - conformes;
+      const pctNaoConforme = totalInsp ? Math.round((naoConformes / totalInsp) * 100) : 0;
+
+      const fcaPendentes = fcas.filter((x) => x.status === "Pendente").length;
+      const fcaConcluidas = fcas.filter((x) => x.status === "Concluida").length;
+
+      // agrupamento simples por setor (calculado no cliente a partir do
+      // que já foi buscado — sem necessidade de outra função no banco)
+      const porSetor = {};
+      inspecoes.forEach((i) => {
+        const nome = i.setores?.nome || "Sem setor";
+        porSetor[nome] ||= { total: 0, naoConforme: 0 };
+        porSetor[nome].total += 1;
+        if (!i.conforme) porSetor[nome].naoConforme += 1;
+      });
+      const setoresOrdenados = Object.entries(porSetor).sort((a, b) => b[1].total - a[1].total).slice(0, 8);
+      const maiorTotal = Math.max(1, ...setoresOrdenados.map(([, v]) => v.total));
+
+      box.innerHTML = `
+        <div class="section-title">Inspeções</div>
+        <div class="stat-grid">
+          <div class="stat-chip"><div class="stat-chip__n">${totalInsp}</div><div class="stat-chip__label">Total</div></div>
+          <div class="stat-chip ok"><div class="stat-chip__n">${conformes}</div><div class="stat-chip__label">Conformes</div></div>
+          <div class="stat-chip bad"><div class="stat-chip__n">${naoConformes}</div><div class="stat-chip__label">Não conformes</div></div>
+          <div class="stat-chip warn"><div class="stat-chip__n">${pctNaoConforme}%</div><div class="stat-chip__label">Taxa não conf.</div></div>
+        </div>
+
+        <div class="section-title">FCA</div>
+        <div class="stat-grid">
+          <div class="stat-chip"><div class="stat-chip__n">${fcas.length}</div><div class="stat-chip__label">Total</div></div>
+          <div class="stat-chip warn"><div class="stat-chip__n">${fcaPendentes}</div><div class="stat-chip__label">Pendentes</div></div>
+          <div class="stat-chip ok"><div class="stat-chip__n">${fcaConcluidas}</div><div class="stat-chip__label">Concluídas</div></div>
+          <div class="stat-chip"><div class="stat-chip__n">${fcas.length ? Math.round((fcaPendentes / fcas.length) * 100) : 0}%</div><div class="stat-chip__label">% pendente</div></div>
+        </div>
+
+        <div class="section-title">Inspeções por setor</div>
+        ${
+          setoresOrdenados.length
+            ? setoresOrdenados
+                .map(
+                  ([nome, v]) => `
+              <div class="bar-row">
+                <div class="bar-row__head"><span>${nome}</span><b>${v.total} (${v.naoConforme} não conf.)</b></div>
+                <div class="bar-row__track"><div class="bar-row__fill" style="width:${(v.total / maiorTotal) * 100}%"></div></div>
+              </div>`
+                )
+                .join("")
+            : `<div class="empty-state">Nenhuma inspeção encontrada com esse filtro.</div>`
+        }
+      `;
+    } catch (err) {
+      console.error(err);
+      box.innerHTML = `<div class="empty-state">Erro ao carregar o painel.</div>`;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------
 // router / render
 // ---------------------------------------------------------------------
 const SCREENS = {
@@ -1029,6 +1341,7 @@ const SCREENS = {
   fca: screenFca,
   retorno: screenRetorno,
   consulta: screenConsulta,
+  dashboard: screenDashboard,
   config: screenConfig,
 };
 
