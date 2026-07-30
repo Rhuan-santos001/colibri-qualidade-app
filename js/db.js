@@ -81,6 +81,16 @@ const DB = {
     return data && data.length ? data[0] : null;
   },
 
+  async listarLotes() {
+    const { data, error } = await supa
+      .from("lotes")
+      .select("id, numero")
+      .order("criado_em", { ascending: false })
+      .limit(1000);
+    if (error) throw error;
+    return data || [];
+  },
+
   async ordensPorLote(loteId) {
     if (!loteId) return [];
     const { data, error } = await supa

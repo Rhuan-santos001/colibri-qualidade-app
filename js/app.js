@@ -11,6 +11,8 @@ const State = {
   adminSenha: null,     // senha em memória (não persistida) p/ ações admin
   setores: [],
   recursosCache: {},
+  lotes: null,
+  ordensCache: {},
   form: {},             // rascunho do formulário ativo
   inspecoesHoje: 0,
 };
@@ -62,6 +64,19 @@ async function ensureSetores() {
     }
   }
   return State.setores;
+}
+
+async function ensureLotes() {
+  if (!State.lotes) {
+    try {
+      State.lotes = await DB.listarLotes();
+    } catch (e) {
+      console.error(e);
+      State.lotes = [];
+      toast("Não foi possível carregar os lotes. Confira a configuração do Supabase.", "error");
+    }
+  }
+  return State.lotes;
 }
 
 // ---------------------------------------------------------------------
@@ -274,23 +289,37 @@ function screenInspecao() {
   let html = `<div class="step-track"><div class="${step >= 1 ? "done" : ""}"></div><div class="${step >= 2 ? "done" : ""}"></div></div>`;
 
   if (step === 1) {
+    ensureLotes().then(renderStep1);
+    return;
+  }
+
+  function renderStep1() {
+    const lotes = State.lotes || [];
     html += `
       <form id="f1">
         <div class="field">
           <label>Nº Lote<span class="req">*</span></label>
-          <input class="mono" type="text" id="numero_lote" value="${d.numero_lote}" required />
-          <div class="hint" id="lote-hint"></div>
+          <select id="numero_lote" required>
+            <option value="">Selecione o lote...</option>
+            ${lotes
+              .map(
+                (l) =>
+                  `<option value="${l.id}" data-numero="${l.numero}" ${String(d.lote_id) === String(l.id) ? "selected" : ""}>${l.numero}</option>`
+              )
+              .join("")}
+          </select>
+          <div class="hint">${lotes.length ? lotes.length + " lote(s) disponível(is), mais recentes primeiro." : "Nenhum lote importado ainda — rode o script de importação (scripts/atualizar_lotes_ordens_pecas.py)."}</div>
         </div>
         <div class="field">
           <label>Ordem de fabricação<span class="req">*</span></label>
-          <div id="ordem-field-wrap">
-            <input class="mono" type="text" id="ordem_fabricacao" value="${d.ordem_fabricacao}" required />
-          </div>
+          <select id="ordem_fabricacao" required disabled>
+            <option value="">Selecione o lote primeiro</option>
+          </select>
         </div>
         <div class="field">
           <label>Código da Peça<span class="req">*</span></label>
-          <input class="mono" type="text" id="codigo_peca" value="${d.codigo_peca}" required />
-          <div class="hint" id="peca-hint"></div>
+          <input class="mono" type="text" id="codigo_peca" value="${d.codigo_peca}" readonly required />
+          <div class="hint">Preenchido automaticamente ao escolher a ordem.</div>
         </div>
         <div class="field">
           <label>Tipo de processo</label>
@@ -314,89 +343,82 @@ function screenInspecao() {
 
     bindRadios();
 
-    const loteInput = document.getElementById("numero_lote");
-    const loteHint = document.getElementById("lote-hint");
-    const ordemWrap = document.getElementById("ordem-field-wrap");
+    const loteSelect = document.getElementById("numero_lote");
+    const ordemSelect = document.getElementById("ordem_fabricacao");
     const pecaInput = document.getElementById("codigo_peca");
-    const pecaHint = document.getElementById("peca-hint");
 
-    function ordemComoTexto() {
-      ordemWrap.innerHTML = `<input class="mono" type="text" id="ordem_fabricacao" value="${d.ordem_fabricacao || ""}" required />`;
-    }
-
-    function bindOrdemSelect(ordens) {
-      const select = document.getElementById("ordem_fabricacao");
-      select.addEventListener("change", (e) => {
-        const opt = e.target.selectedOptions[0];
-        const codigoPeca = opt ? opt.dataset.peca : "";
-        if (codigoPeca) {
-          pecaInput.value = codigoPeca;
-          d.codigo_peca = codigoPeca;
-          pecaHint.textContent = "Preenchida automaticamente a partir da ordem selecionada.";
-        } else {
-          pecaHint.textContent = "";
-        }
-      });
-    }
-
-    let loteDebounce;
-    async function buscarOrdensDoLote() {
-      const numero = loteInput.value.trim();
-      d.lote_id = null;
-      pecaHint.textContent = "";
-      if (!numero) {
-        loteHint.textContent = "";
-        ordemComoTexto();
-        return;
-      }
-      loteHint.textContent = "Buscando lote...";
+    async function carregarOrdens(loteId) {
+      ordemSelect.disabled = true;
+      ordemSelect.innerHTML = `<option value="">Carregando...</option>`;
       try {
-        const lote = await DB.buscarLotePorNumero(numero);
-        if (!lote) {
-          loteHint.textContent = "Lote não encontrado na base — informe a ordem e a peça manualmente.";
-          ordemComoTexto();
-          return;
-        }
-        d.lote_id = lote.id;
-        const ordens = await DB.ordensPorLote(lote.id);
+        const ordens = (State.ordensCache[loteId] ||= await DB.ordensPorLote(loteId));
         if (!ordens.length) {
-          loteHint.textContent = "Nenhuma ordem importada para este lote ainda — informe manualmente.";
-          ordemComoTexto();
+          ordemSelect.innerHTML = `<option value="">Nenhuma ordem importada para este lote</option>`;
           return;
         }
-        loteHint.textContent = `${ordens.length} ordem(ns) encontrada(s) para este lote.`;
-        ordemWrap.innerHTML = `
-          <select id="ordem_fabricacao" required>
-            <option value="">Selecione a ordem...</option>
-            ${ordens
-              .map(
-                (o) =>
-                  `<option value="${o.numero}" data-peca="${o.pecas?.codigo || ""}" ${d.ordem_fabricacao === o.numero ? "selected" : ""}>${o.numero}</option>`
-              )
-              .join("")}
-          </select>`;
-        bindOrdemSelect(ordens);
+        ordemSelect.disabled = false;
+        ordemSelect.innerHTML =
+          `<option value="">Selecione a ordem...</option>` +
+          ordens
+            .map(
+              (o) =>
+                `<option value="${o.numero}" data-peca="${o.pecas?.codigo || ""}" ${d.ordem_fabricacao === o.numero ? "selected" : ""}>${o.numero}</option>`
+            )
+            .join("");
+        if (d.ordem_fabricacao) {
+          const sel = ordens.find((o) => o.numero === d.ordem_fabricacao);
+          if (sel) pecaInput.value = sel.pecas?.codigo || "";
+        }
       } catch (err) {
         console.error(err);
-        loteHint.textContent = "Erro ao buscar o lote — informe a ordem manualmente.";
-        ordemComoTexto();
+        ordemSelect.innerHTML = `<option value="">Erro ao carregar ordens</option>`;
       }
     }
-    loteInput.addEventListener("input", () => {
-      clearTimeout(loteDebounce);
-      loteDebounce = setTimeout(buscarOrdensDoLote, 450);
+
+    if (d.lote_id) carregarOrdens(d.lote_id);
+
+    loteSelect.addEventListener("change", (e) => {
+      d.lote_id = e.target.value || null;
+      d.numero_lote = e.target.selectedOptions[0]?.dataset.numero || "";
+      d.ordem_fabricacao = "";
+      d.codigo_peca = "";
+      pecaInput.value = "";
+      if (d.lote_id) {
+        carregarOrdens(d.lote_id);
+      } else {
+        ordemSelect.disabled = true;
+        ordemSelect.innerHTML = `<option value="">Selecione o lote primeiro</option>`;
+      }
     });
-    if (d.numero_lote) buscarOrdensDoLote();
+
+    ordemSelect.addEventListener("change", (e) => {
+      const opt = e.target.selectedOptions[0];
+      d.ordem_fabricacao = e.target.value;
+      const codigoPeca = opt ? opt.dataset.peca : "";
+      pecaInput.value = codigoPeca || "";
+      d.codigo_peca = codigoPeca || "";
+      if (d.ordem_fabricacao && !codigoPeca) {
+        toast("Essa ordem não tem peça vinculada na base — confira a importação.", "error");
+      }
+    });
 
     document.getElementById("f1").addEventListener("submit", (e) => {
       e.preventDefault();
-      d.numero_lote = loteInput.value.trim();
-      d.ordem_fabricacao = document.getElementById("ordem_fabricacao").value.trim();
-      d.codigo_peca = pecaInput.value.trim();
+      if (!d.lote_id) {
+        toast("Selecione o lote.", "error");
+        return;
+      }
+      if (!d.ordem_fabricacao) {
+        toast("Selecione a ordem.", "error");
+        return;
+      }
+      if (!d.codigo_peca) {
+        toast("Essa ordem não tem peça vinculada. Confira a importação antes de continuar.", "error");
+        return;
+      }
       d.descricao = document.getElementById("descricao").value.trim();
       navigate("inspecao", { step: 2, data: d });
     });
-    return;
   }
 
   // step 2

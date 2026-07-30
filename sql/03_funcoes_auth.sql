@@ -12,6 +12,13 @@
 -- funções, nunca diretamente.
 -- =====================================================================
 
+-- Garantia extra: instala/confirma a extensão aqui também, caso este
+-- arquivo seja executado isoladamente (ela já deveria ter sido criada
+-- em 01_schema.sql). No Supabase, pgcrypto normalmente vive no schema
+-- `extensions` — por isso o search_path das funções abaixo inclui
+-- "public, extensions".
+create extension if not exists pgcrypto with schema extensions;
+
 -- ---------------------------------------------------------------------
 -- LOGIN: confere usuário/senha e devolve os dados (sem o hash)
 -- ---------------------------------------------------------------------
@@ -19,7 +26,7 @@ create or replace function public.app_login(p_usuario text, p_senha text)
 returns table (id uuid, usuario text, nome text, perfil text)
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 begin
   return query
@@ -49,7 +56,7 @@ create or replace function public.app_criar_usuario(
 returns table (ok boolean, mensagem text)
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_admin_ok boolean;
@@ -104,7 +111,7 @@ create or replace function public.app_listar_usuarios(p_admin_usuario text, p_ad
 returns table (id uuid, usuario text, nome text, perfil text, ativo boolean, criado_em timestamptz)
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_admin_ok boolean;
@@ -144,7 +151,7 @@ create or replace function public.app_atualizar_usuario(
 returns table (ok boolean, mensagem text)
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_admin_ok boolean;
@@ -220,3 +227,12 @@ create policy "atualizacao fca" on public.fca for update using (true);
 
 create policy "leitura fca_retorno" on public.fca_retorno for select using (true);
 create policy "insercao fca_retorno" on public.fca_retorno for insert with check (true);
+
+-- RLS controla QUAIS LINHAS um role vê/altera, mas o Postgres também
+-- exige a permissão básica na tabela (GRANT) — sem isso o site recebe
+-- 401/"permission denied" mesmo com as policies acima criadas.
+grant usage on schema public to anon, authenticated;
+grant select on public.setores, public.recursos to anon, authenticated;
+grant select, insert on public.inspecoes to anon, authenticated;
+grant select, insert, update on public.fca to anon, authenticated;
+grant select, insert on public.fca_retorno to anon, authenticated;

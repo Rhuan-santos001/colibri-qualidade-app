@@ -16,7 +16,7 @@
 -- cadastrar inspetores. Ver README.md para detalhes de segurança.
 -- =====================================================================
 
-create extension if not exists "pgcrypto";
+create extension if not exists "pgcrypto" with schema extensions;
 
 -- ---------------------------------------------------------------------
 -- USUÁRIOS (login do sistema)

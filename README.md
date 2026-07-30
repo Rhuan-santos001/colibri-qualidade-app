@@ -51,7 +51,24 @@ substituindo o Power App atual. 100% estático — feito para rodar no
    SQL — quem as preenche é o script `scripts/atualizar_lotes_ordens_pecas.py`,
    rodado (manualmente ou por agendamento) toda vez que você exporta o
    relatório do ERP. Veja a seção **"Importação diária de Lote/Ordem/Peça"**
-   abaixo.
+   abaixo. No Cadastro de Inspeção, **Nº Lote** e **Ordem de fabricação**
+   viram listas suspensas em cascata: ao escolher o lote, aparecem só as
+   ordens daquele lote; ao escolher a ordem, o **Código da Peça** é
+   preenchido sozinho (campo travado — se a ordem não tiver peça
+   vinculada, o app avisa e não deixa continuar).
+
+### Problemas comuns ao rodar o SQL
+
+- **`function crypt(text, text) does not exist`** — no Supabase a
+  extensão `pgcrypto` normalmente fica no schema `extensions`, não em
+  `public`. Já corrigido nos arquivos `01`/`03`; se você já tinha
+  rodado o SQL antes dessa correção, rode só `sql/06_fix_pgcrypto.sql`
+  (não apaga nada, só conserta).
+- **`permission denied for table inspecoes` / 401 Unauthorized no
+  site** — RLS controla quais *linhas* um usuário vê, mas o Postgres
+  também exige a permissão básica na tabela (`GRANT`); as policies
+  sozinhas não bastam. Já corrigido nos arquivos `03`/`05`; se você já
+  tinha rodado o SQL antes, rode só `sql/07_fix_grants.sql`.
 
 ### Por que não usei o Supabase Auth?
 
@@ -136,12 +153,12 @@ script.
 
 ### Como isso aparece no app
 
-Na tela **Cadastro de Inspeção**, ao digitar o **Nº Lote**, o app busca
-no Supabase e, se encontrar, troca o campo **Ordem de fabricação** por
-uma lista com as ordens daquele lote. Ao escolher a ordem, o **Código
-da Peça** é preenchido sozinho (mas continua editável, caso precise
-corrigir). Se o lote ainda não tiver sido importado, os campos
-continuam como texto livre, do jeito que já funcionava antes.
+Na tela **Cadastro de Inspeção**, **Nº Lote** e **Ordem de fabricação**
+são listas suspensas. Ao escolher o lote, a lista de ordens é filtrada
+só para as daquele lote; ao escolher a ordem, o **Código da Peça** é
+preenchido sozinho (campo travado). Se um lote ainda não tiver ordens
+importadas, a lista de ordens fica vazia com um aviso — rode o script
+de importação antes de inspecionar aquele lote.
 
 ```
 gestao-qualidade/
@@ -157,7 +174,9 @@ gestao-qualidade/
 │   ├── 02_seed_setores_recursos.sql
 │   ├── 03_funcoes_auth.sql
 │   ├── 04_storage.sql
-│   └── 05_lotes_ordens_pecas.sql
+│   ├── 05_lotes_ordens_pecas.sql
+│   ├── 06_fix_pgcrypto.sql   <- patch, só use se já rodou o SQL antes
+│   └── 07_fix_grants.sql     <- patch, só use se já rodou o SQL antes
 ├── scripts/
 │   ├── atualizar_lotes_ordens_pecas.py
 │   ├── requirements.txt

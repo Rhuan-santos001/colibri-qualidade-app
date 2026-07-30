@@ -67,3 +67,6 @@ alter table public.ordens enable row level security;
 create policy "leitura publica lotes"  on public.lotes  for select using (true);
 create policy "leitura publica pecas"  on public.pecas  for select using (true);
 create policy "leitura publica ordens" on public.ordens for select using (true);
+
+grant usage on schema public to anon, authenticated;
+grant select on public.lotes, public.pecas, public.ordens to anon, authenticated;
