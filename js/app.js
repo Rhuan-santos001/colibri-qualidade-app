@@ -14,7 +14,6 @@ const State = {
   lotes: null,
   ordensCache: {},
   form: {},             // rascunho do formulário ativo
-  inspecoesHoje: 0,
 };
 
 // ---------------------------------------------------------------------
@@ -216,7 +215,7 @@ function screenHome() {
 
     <div class="stat-row">
       <div class="stat-chip">
-        <div class="stat-chip__n">${State.inspecoesHoje}</div>
+        <div class="stat-chip__n" id="home-inspecoes-count">–</div>
         <div class="stat-chip__label">Inspeções hoje</div>
       </div>
       <div class="stat-chip">
@@ -266,6 +265,13 @@ function screenHome() {
     .then((rows) => {
       const el = document.getElementById("home-fca-count");
       if (el) el.textContent = rows.length;
+    })
+    .catch(() => {});
+
+  DB.contarInspecoesHoje(State.session.id)
+    .then((n) => {
+      const el = document.getElementById("home-inspecoes-count");
+      if (el) el.textContent = n;
     })
     .catch(() => {});
 }
@@ -354,6 +360,7 @@ function screenInspecao() {
           <select id="ordem_fabricacao" required disabled>
             <option value="">Selecione o lote primeiro</option>
           </select>
+          <div class="hint" id="ordem-legenda">${d.tipo_processo === "Maquina" ? "🟢 disponível para inspeção neste recurso · 🔴 já inspecionada neste recurso" : ""}</div>
         </div>
         <div class="field">
           <label>Código da Peça<span class="req">*</span></label>
@@ -378,6 +385,9 @@ function screenInspecao() {
         const rs = document.getElementById("recurso_id");
         if (rs) rs.value = "";
       }
+      const legenda = document.getElementById("ordem-legenda");
+      if (legenda) legenda.textContent = pulmao ? "" : "🟢 disponível para inspeção neste recurso · 🔴 já inspecionada neste recurso";
+      if (d.lote_id) carregarOrdens(d.lote_id);
       checarDuplicidade();
     });
 
@@ -415,6 +425,7 @@ function screenInspecao() {
 
     recursoSelect.addEventListener("change", (e) => {
       d.recurso_id = e.target.value;
+      if (d.lote_id) carregarOrdens(d.lote_id);
       checarDuplicidade();
     });
 
@@ -427,14 +438,32 @@ function screenInspecao() {
           ordemSelect.innerHTML = `<option value="">Nenhuma ordem importada para este lote</option>`;
           return;
         }
+
+        // Se já temos setor+recurso (Máquina), marca quais ordens desse
+        // lote já foram inspecionadas nesse recurso (vermelho/indisponível)
+        // e quais ainda estão livres (verde/disponível).
+        let jaInspecionadas = new Set();
+        const podeChecar = d.tipo_processo === "Maquina" && d.recurso_id;
+        if (podeChecar) {
+          try {
+            const numeros = ordens.map((o) => o.numero);
+            const existentes = await DB.ordensJaInspecionadas(d.recurso_id, numeros);
+            jaInspecionadas = new Set(existentes);
+          } catch (e) {
+            console.error(e);
+          }
+        }
+
         ordemSelect.disabled = false;
         ordemSelect.innerHTML =
           `<option value="">Selecione a ordem...</option>` +
           ordens
-            .map(
-              (o) =>
-                `<option value="${o.numero}" data-peca="${o.pecas?.codigo || ""}" ${d.ordem_fabricacao === o.numero ? "selected" : ""}>${o.numero}</option>`
-            )
+            .map((o) => {
+              const indisponivel = podeChecar && jaInspecionadas.has(o.numero);
+              const marcador = podeChecar ? (indisponivel ? "🔴" : "🟢") : "";
+              const rotulo = marcador ? `${marcador} ${o.numero}${indisponivel ? " — já inspecionada" : ""}` : o.numero;
+              return `<option value="${o.numero}" data-peca="${o.pecas?.codigo || ""}" ${d.ordem_fabricacao === o.numero ? "selected" : ""} ${indisponivel ? "disabled" : ""}>${rotulo}</option>`;
+            })
             .join("");
         if (d.ordem_fabricacao) {
           const sel = ordens.find((o) => o.numero === d.ordem_fabricacao);
@@ -618,6 +647,8 @@ function screenInspecao() {
 
     document.getElementById("f2").addEventListener("submit", async (e) => {
       e.preventDefault();
+      const abrirFcaChecked = document.querySelector('input[name=abrir_fca_insp]:checked')?.value === "1";
+      d.abrir_fca = abrirFcaChecked;
       const btn = e.target.querySelector("button[type=submit]");
       btn.disabled = true;
       btn.textContent = "Salvando...";
@@ -635,9 +666,8 @@ function screenInspecao() {
           inspetor_id: State.session.id,
           inspetor_nome: State.session.nome,
         });
-        State.inspecoesHoje += 1;
 
-        if (d.abrir_fca) {
+        if (abrirFcaChecked) {
           toast("Inspeção registrada. Complete os dados da FCA.", "success");
           navigate("fca", {
             step: 1,
@@ -866,46 +896,68 @@ function screenFca() {
 // RETORNO FCA — lista pendentes e dá baixa
 // ---------------------------------------------------------------------
 function screenRetorno() {
-  App.innerHTML = shell(`<div id="lista-fca"><div class="empty-state">Carregando...</div></div>`, {
-    title: "Retorno FCA",
-    subtitle: "FCAs pendentes de fechamento",
-  });
+  ensureSetores().then(render);
 
-  DB.listarFcaPendentes()
-    .then((rows) => {
-      const box = document.getElementById("lista-fca");
-      if (!rows.length) {
-        box.innerHTML = `<div class="empty-state"><div class="glyph">↺</div>Nenhuma FCA pendente no momento.</div>`;
-        return;
-      }
-      box.innerHTML = rows
-        .map(
-          (f) => `
-        <div class="card" data-fca="${f.id}">
-          <div class="card__top">
-            <div>
-              <span class="tag tag-pending">Pendente</span>
-              <div class="card__meta" style="margin-top:8px;">
-                <span><b>Encontrado:</b> ${f.encontrado?.nome || "—"}</span>
-                <span><b>Origem:</b> ${f.origem?.nome || "—"}</span>
-                <span><b>Operador:</b> ${f.nome_operador || "—"}</span>
-                <span><b>Qtd. peças:</b> ${f.quantidade_pecas ?? "—"}</span>
-                <span><b>Aberta em:</b> ${new Date(f.criado_em).toLocaleString("pt-BR")}</span>
+  function render() {
+    const html = `
+      <div class="filter-panel">
+        <div class="field" style="margin-bottom:4px;">
+          <label>Setor Encontrado</label>
+          <select id="filtro-setor-retorno">
+            <option value="">Todos</option>
+            ${State.setores.map((s) => `<option value="${s.id}">${s.nome}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div id="lista-fca"><div class="empty-state">Carregando...</div></div>
+    `;
+    App.innerHTML = shell(html, { title: "Retorno FCA", subtitle: "FCAs pendentes de fechamento" });
+
+    document.getElementById("filtro-setor-retorno").addEventListener("change", carregar);
+    carregar();
+  }
+
+  function carregar() {
+    const setorId = document.getElementById("filtro-setor-retorno")?.value || null;
+    const box = document.getElementById("lista-fca");
+    box.innerHTML = `<div class="empty-state">Carregando...</div>`;
+
+    DB.listarFcaPendentes({ setorId })
+      .then((rows) => {
+        if (!rows.length) {
+          box.innerHTML = `<div class="empty-state"><div class="glyph">↺</div>Nenhuma FCA pendente com esse filtro.</div>`;
+          return;
+        }
+        box.innerHTML = rows
+          .map(
+            (f) => `
+          <div class="card" data-fca="${f.id}">
+            <div class="card__top">
+              <div>
+                <span class="tag tag-pending">Pendente</span>
+                <div class="card__meta" style="margin-top:8px;">
+                  ${f.numero_lote || f.ordem_fabricacao || f.codigo_peca ? `<span><b>Lote/Ordem/Peça:</b> ${f.numero_lote || "—"} / ${f.ordem_fabricacao || "—"} / ${f.codigo_peca || "—"}</span>` : ""}
+                  <span><b>Encontrado:</b> ${f.encontrado?.nome || "—"}</span>
+                  <span><b>Origem:</b> ${f.origem?.nome || "—"}</span>
+                  <span><b>Operador:</b> ${f.nome_operador || "—"}</span>
+                  <span><b>Qtd. peças:</b> ${f.quantidade_pecas ?? "—"}</span>
+                  <span><b>Aberta em:</b> ${new Date(f.criado_em).toLocaleString("pt-BR")}</span>
+                </div>
               </div>
             </div>
-          </div>
-        </div>`
-        )
-        .join("");
+          </div>`
+          )
+          .join("");
 
-      box.querySelectorAll("[data-fca]").forEach((card) => {
-        card.addEventListener("click", () => abrirModalRetorno(card.dataset.fca));
+        box.querySelectorAll("[data-fca]").forEach((card) => {
+          card.addEventListener("click", () => abrirModalRetorno(card.dataset.fca));
+        });
+      })
+      .catch((err) => {
+        console.error(err);
+        box.innerHTML = `<div class="empty-state">Erro ao carregar FCAs.</div>`;
       });
-    })
-    .catch((err) => {
-      console.error(err);
-      document.getElementById("lista-fca").innerHTML = `<div class="empty-state">Erro ao carregar FCAs.</div>`;
-    });
+  }
 }
 
 function abrirModalRetorno(fcaId) {

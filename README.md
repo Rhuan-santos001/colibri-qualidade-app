@@ -7,17 +7,23 @@ substituindo o Power App atual. 100% estático — feito para rodar no
 ## Telas
 
 - **Login** — usuário e senha próprios do sistema.
-- **Início** — boas-vindas, atalhos e contador de FCAs pendentes.
+- **Início** — boas-vindas, atalhos, contador de FCAs pendentes e de
+  inspeções feitas **hoje pelo usuário logado** (calculado direto no
+  banco a cada visita à tela — não é um contador que fica só na memória
+  do navegador, então não some se você trocar de aparelho, atualizar a
+  página ou ficar um tempo sem mexer no celular).
 - **Cadastro de Inspeção** — passo 1: Setor, Tipo de processo (Máquina/
   Pulmão — se Pulmão, mostra uma caixa dizendo a qual setor ele se
   refere), Recurso/Máquina (se Máquina), Nº Lote, Ordem de fabricação
-  (lista as ordens do lote escolhido) e Código da Peça (preenchido
-  sozinho a partir da ordem). **Regra:** por Recurso, uma Ordem só pode
-  ser inspecionada uma vez — se já houver inspeção para aquele par
-  Recurso+Ordem, o app avisa e bloqueia o "Continuar". Passo 2: anexos,
-  resultado Conforme/Não Conforme e **"Abrir FCA para esta peça?"** — se
-  marcar "Sim", ao salvar a inspeção o app já leva direto para o
-  Cadastro FCA com o lote/ordem/peça/setor preenchidos.
+  (lista as ordens do lote escolhido, marcando com 🟢 as disponíveis e
+  🔴 as já inspecionadas naquele recurso — essas ficam desabilitadas na
+  lista) e Código da Peça (preenchido sozinho a partir da ordem).
+  **Regra:** por Recurso, uma Ordem só pode ser inspecionada uma vez —
+  se já houver inspeção para aquele par Recurso+Ordem, o app avisa e
+  bloqueia o "Continuar". Passo 2: anexos, resultado Conforme/Não
+  Conforme e **"Abrir FCA para esta peça?"** — se marcar "Sim", ao
+  salvar a inspeção o app já leva direto para o Cadastro FCA com o
+  lote/ordem/peça/setor preenchidos.
 - **Cadastro FCA** — abrir FCA (sim/não — some quando a FCA já veio
   vinculada de uma inspeção, mostrando uma caixa com o lote/ordem/peça
   em vez disso), setor encontrado, setor de origem, operador,
@@ -28,9 +34,9 @@ substituindo o Power App atual. 100% estático — feito para rodar no
   um recurso específico — ou Pulmão). Mostra totais, taxa de não
   conformidade, FCAs pendentes/concluídas e um ranking de inspeções por
   setor.
-- **Retorno FCA** — lista as FCAs com status "Pendente"; ao tocar em uma,
-  abre o formulário de causa raiz / ação corretiva / responsável e marca
-  a FCA como "Concluída".
+- **Retorno FCA** — lista as FCAs com status "Pendente", com filtro por
+  Setor Encontrado; ao tocar em uma, abre o formulário de causa raiz /
+  ação corretiva / responsável e marca a FCA como "Concluída".
 - **Consulta** — lista as inspeções, com filtro por setor e busca por lote
   (equivalente à tela "Selecione o Setor" do Power App).
 - **Configurações** (só para usuários com perfil `admin`) — cria e
@@ -39,7 +45,21 @@ substituindo o Power App atual. 100% estático — feito para rodar no
 ## 1. Criar o projeto no Supabase
 
 1. Crie um projeto em [supabase.com](https://supabase.com).
-2. Vá em **SQL Editor** e rode, **nesta ordem**, os arquivos da pasta `sql/`:
+2. Vá em **SQL Editor** e rode **`sql/RESET_E_SETUP_COMPLETO.sql`** —
+   um único arquivo que já tem tudo (schema, seed de setores/recursos,
+   autenticação própria, storage, lote→ordem→peça, regra de inspeção
+   única e FCA vinculada a peça). Não precisa rodar mais nada depois.
+
+   ⚠️ Esse arquivo começa apagando as tabelas do app antes de recriar
+   — perfeito para instalar do zero ou zerar um ambiente de teste, mas
+   **não rode num banco em produção com dados que você quer manter**
+   (nesse caso use os arquivos numerados `01` a `09` abaixo, ou peça
+   ajuda para uma migração sem perda de dados).
+
+   <details>
+   <summary>Prefere rodar em partes? (arquivos individuais)</summary>
+
+   Rode, **nesta ordem**, os arquivos numerados da pasta `sql/`:
    1. `01_schema.sql`
    2. `02_seed_setores_recursos.sql` (já traz todos os Setores e Recursos
       extraídos da sua planilha `SETORES_E_RECURSOS.xlsx`)
@@ -54,7 +74,12 @@ substituindo o Power App atual. 100% estático — feito para rodar no
    7. `09_fca_peca_especifica.sql` (adiciona lote/ordem/peça na FCA, para
       quando ela é aberta direto de uma inspeção)
 
-   Ou rode tudo de uma vez com `00_TUDO_EM_UM.sql`.
+   Os arquivos `06_fix_pgcrypto.sql` e `07_fix_grants.sql` são patches
+   avulsos — só use se você já tinha um banco rodando antes dessas
+   correções entrarem no `01`/`03`/`05` e não quer refazer tudo do zero.
+   `00_TUDO_EM_UM.sql` é a soma de `01` a `09`, sem o reset — use se
+   quiser tudo em um arquivo só mas **sem apagar nada primeiro**.
+   </details>
 
 3. Usuário administrador inicial:
    - **login:** `admin`
@@ -129,6 +154,18 @@ Esses dados estão em **Project Settings → API** no painel do Supabase
    escolha a branch `main` e a pasta `/ (root)`.
 3. Aguarde alguns minutos — o site fica disponível em
    `https://SEU-USUARIO.github.io/NOME-DO-REPOSITORIO/`.
+
+### Depois de cada atualização, o navegador não mostra a mudança?
+
+O `index.html` carrega `css/style.css`, `js/config.js`, `js/db.js` e
+`js/app.js` com um parâmetro `?v=6` no final. Isso existe porque
+navegadores (e o próprio GitHub Pages) guardam esses arquivos em cache
+agressivamente — sem esse parâmetro, depois de eu te mandar uma
+atualização o celular/navegador de quem já usou o site antes pode
+continuar rodando a versão antiga por dias. **Toda vez que eu te
+mandar um `app.js`/`db.js`/`style.css` novos, aumente esse número**
+(`?v=7`, `?v=8`...) nas 4 linhas do `index.html` antes de publicar —
+isso força todo mundo a baixar a versão nova.
 
 ## Importação diária de Lote / Ordem / Peça
 

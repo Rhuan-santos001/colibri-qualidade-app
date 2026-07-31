@@ -124,6 +124,17 @@ const DB = {
     return data && data.length ? data[0] : null;
   },
 
+  async ordensJaInspecionadas(recursoId, ordensNumeros) {
+    if (!recursoId || !ordensNumeros || !ordensNumeros.length) return [];
+    const { data, error } = await supa
+      .from("inspecoes")
+      .select("ordem_fabricacao")
+      .eq("recurso_id", recursoId)
+      .in("ordem_fabricacao", ordensNumeros);
+    if (error) throw error;
+    return (data || []).map((r) => r.ordem_fabricacao);
+  },
+
   async criarInspecao(payload) {
     const { data, error } = await supa.from("inspecoes").insert(payload).select().single();
     if (error) throw error;
@@ -150,14 +161,16 @@ const DB = {
     return data;
   },
 
-  async listarFcaPendentes() {
-    const { data, error } = await supa
+  async listarFcaPendentes({ setorId } = {}) {
+    let q = supa
       .from("fca")
       .select(
         "*, encontrado:setor_encontrado_id(nome), origem:setor_origem_id(nome)"
       )
       .eq("status", "Pendente")
       .order("criado_em", { ascending: false });
+    if (setorId) q = q.eq("setor_encontrado_id", setorId);
+    const { data, error } = await q;
     if (error) throw error;
     return data || [];
   },
@@ -170,6 +183,19 @@ const DB = {
       .single();
     if (error) throw error;
     return data;
+  },
+
+  async contarInspecoesHoje(inspetorId) {
+    if (!inspetorId) return 0;
+    const inicio = new Date();
+    inicio.setHours(0, 0, 0, 0);
+    const { count, error } = await supa
+      .from("inspecoes")
+      .select("id", { count: "exact", head: true })
+      .eq("inspetor_id", inspetorId)
+      .gte("criado_em", inicio.toISOString());
+    if (error) throw error;
+    return count || 0;
   },
 
   // ---------------- DASHBOARD ----------------
