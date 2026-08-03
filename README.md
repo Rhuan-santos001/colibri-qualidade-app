@@ -34,9 +34,11 @@ substituindo o Power App atual. 100% estático — feito para rodar no
   um recurso específico — ou Pulmão). Mostra totais, taxa de não
   conformidade, FCAs pendentes/concluídas e um ranking de inspeções por
   setor.
-- **Retorno FCA** — lista as FCAs com status "Pendente", com filtro por
-  Setor Encontrado; ao tocar em uma, abre o formulário de causa raiz /
-  ação corretiva / responsável e marca a FCA como "Concluída".
+- **Relatório FCA** (antes "Retorno FCA") — lista as FCAs com filtro por
+  Status (Em aberto / Encerrada / Todas) e por Setor Encontrado. Tocar
+  numa FCA **em aberto** abre o formulário de causa raiz / ação
+  corretiva / responsável para encerrá-la; tocar numa **encerrada**
+  mostra esses mesmos dados em modo só leitura, para consulta.
 - **Consulta** — lista as inspeções, com filtro por setor e busca por lote
   (equivalente à tela "Selecione o Setor" do Power App).
 - **Configurações** (só para usuários com perfil `admin`) — cria e
@@ -251,8 +253,9 @@ cálculo para uma view/RPC no Postgres (eu ajudo quando chegar lá).
 ## Melhorias em relação ao Power App atual
 
 - Setor → Recurso/Máquina em cascata (o Power App só tinha Setor solto).
-- Retorno FCA vira de fato uma fila de pendências, com causa raiz e
-  ação corretiva registradas, em vez de uma tela solta.
+- Retorno FCA vira de fato um Relatório FCA com fila de pendências e
+  histórico de encerradas, com causa raiz e ação corretiva registradas,
+  em vez de uma tela solta.
 - Consulta com busca por lote além do filtro por setor.
 - Login e controle de usuários (o Power App não tinha).
 - Dados de setor/recurso centralizados no banco, então atualizar uma

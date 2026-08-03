@@ -85,7 +85,7 @@ const NAV_ITEMS = [
   { route: "home", label: "Início", icon: "◆" },
   { route: "inspecao", label: "Inspeção", icon: "✓" },
   { route: "fca", label: "FCA", icon: "▲" },
-  { route: "retorno", label: "Retorno", icon: "↺" },
+  { route: "retorno", label: "Relatório", icon: "↺" },
   { route: "consulta", label: "Consulta", icon: "⌕" },
   { route: "dashboard", label: "Painel", icon: "▥" },
 ];
@@ -244,8 +244,8 @@ function screenHome() {
       <button class="menu-card" data-route="retorno">
         <div class="menu-card__icon">↺</div>
         <div>
-          <div class="menu-card__title">Retorno FCA</div>
-          <div class="menu-card__desc">Dar baixa nas FCAs pendentes</div>
+          <div class="menu-card__title">Relatório FCA</div>
+          <div class="menu-card__desc">Consultar FCAs em aberto/encerradas e dar baixa nas pendentes</div>
         </div>
         <div class="menu-card__chevron">›</div>
       </button>
@@ -901,6 +901,14 @@ function screenRetorno() {
   function render() {
     const html = `
       <div class="filter-panel">
+        <div class="field">
+          <label>Status</label>
+          <select id="filtro-status-retorno">
+            <option value="Pendente">Em aberto</option>
+            <option value="Concluida">Encerrada</option>
+            <option value="">Todas</option>
+          </select>
+        </div>
         <div class="field" style="margin-bottom:4px;">
           <label>Setor Encontrado</label>
           <select id="filtro-setor-retorno">
@@ -911,30 +919,33 @@ function screenRetorno() {
       </div>
       <div id="lista-fca"><div class="empty-state">Carregando...</div></div>
     `;
-    App.innerHTML = shell(html, { title: "Retorno FCA", subtitle: "FCAs pendentes de fechamento" });
+    App.innerHTML = shell(html, { title: "Relatório FCA", subtitle: "FCAs em aberto e encerradas" });
 
+    document.getElementById("filtro-status-retorno").addEventListener("change", carregar);
     document.getElementById("filtro-setor-retorno").addEventListener("change", carregar);
     carregar();
   }
 
   function carregar() {
     const setorId = document.getElementById("filtro-setor-retorno")?.value || null;
+    const status = document.getElementById("filtro-status-retorno")?.value || null;
     const box = document.getElementById("lista-fca");
     box.innerHTML = `<div class="empty-state">Carregando...</div>`;
 
-    DB.listarFcaPendentes({ setorId })
+    DB.listarFca({ setorId, status })
       .then((rows) => {
         if (!rows.length) {
-          box.innerHTML = `<div class="empty-state"><div class="glyph">↺</div>Nenhuma FCA pendente com esse filtro.</div>`;
+          box.innerHTML = `<div class="empty-state"><div class="glyph">↺</div>Nenhuma FCA encontrada com esse filtro.</div>`;
           return;
         }
         box.innerHTML = rows
-          .map(
-            (f) => `
-          <div class="card" data-fca="${f.id}">
+          .map((f) => {
+            const pendente = f.status === "Pendente";
+            return `
+          <div class="card" data-fca="${f.id}" data-status="${f.status}">
             <div class="card__top">
               <div>
-                <span class="tag tag-pending">Pendente</span>
+                <span class="tag ${pendente ? "tag-pending" : "tag-done"}">${pendente ? "Em aberto" : "Encerrada"}</span>
                 <div class="card__meta" style="margin-top:8px;">
                   ${f.numero_lote || f.ordem_fabricacao || f.codigo_peca ? `<span><b>Lote/Ordem/Peça:</b> ${f.numero_lote || "—"} / ${f.ordem_fabricacao || "—"} / ${f.codigo_peca || "—"}</span>` : ""}
                   <span><b>Encontrado:</b> ${f.encontrado?.nome || "—"}</span>
@@ -945,12 +956,18 @@ function screenRetorno() {
                 </div>
               </div>
             </div>
-          </div>`
-          )
+          </div>`;
+          })
           .join("");
 
         box.querySelectorAll("[data-fca]").forEach((card) => {
-          card.addEventListener("click", () => abrirModalRetorno(card.dataset.fca));
+          card.addEventListener("click", () => {
+            if (card.dataset.status === "Pendente") {
+              abrirModalRetorno(card.dataset.fca);
+            } else {
+              abrirModalVisualizarFca(card.dataset.fca);
+            }
+          });
         });
       })
       .catch((err) => {
@@ -958,6 +975,42 @@ function screenRetorno() {
         box.innerHTML = `<div class="empty-state">Erro ao carregar FCAs.</div>`;
       });
   }
+}
+
+function abrirModalVisualizarFca(fcaId) {
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop";
+  backdrop.innerHTML = `
+    <div class="modal-sheet">
+      <h3>FCA encerrada</h3>
+      <div id="visualizar-fca-conteudo"><div class="empty-state">Carregando...</div></div>
+      <div class="btn-row"><button type="button" class="btn btn-ghost" id="btn-fechar-visualizar">Fechar</button></div>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop) backdrop.remove();
+  });
+  backdrop.querySelector("#btn-fechar-visualizar").addEventListener("click", () => backdrop.remove());
+
+  DB.buscarRetornoFca(fcaId)
+    .then((retorno) => {
+      const box = backdrop.querySelector("#visualizar-fca-conteudo");
+      if (!retorno) {
+        box.innerHTML = `<div class="empty-state">Essa FCA foi marcada como encerrada, mas não tem um retorno registrado.</div>`;
+        return;
+      }
+      box.innerHTML = `
+        <div class="field"><label>Causa raiz</label><div class="hint" style="font-size:13.5px;color:var(--ink);">${retorno.causa_raiz || "—"}</div></div>
+        <div class="field"><label>Ação corretiva</label><div class="hint" style="font-size:13.5px;color:var(--ink);">${retorno.acao_corretiva || "—"}</div></div>
+        <div class="field"><label>Responsável</label><div class="hint" style="font-size:13.5px;color:var(--ink);">${retorno.responsavel || "—"}</div></div>
+        <div class="field"><label>Encerrada em</label><div class="hint" style="font-size:13.5px;color:var(--ink);">${new Date(retorno.criado_em).toLocaleString("pt-BR")} por ${retorno.inspetor_nome || "—"}</div></div>
+      `;
+    })
+    .catch((err) => {
+      console.error(err);
+      backdrop.querySelector("#visualizar-fca-conteudo").innerHTML = `<div class="empty-state">Erro ao carregar os dados.</div>`;
+    });
 }
 
 function abrirModalRetorno(fcaId) {

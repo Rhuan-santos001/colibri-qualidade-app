@@ -161,18 +161,33 @@ const DB = {
     return data;
   },
 
-  async listarFcaPendentes({ setorId } = {}) {
+  async listarFca({ setorId, status } = {}) {
     let q = supa
       .from("fca")
       .select(
         "*, encontrado:setor_encontrado_id(nome), origem:setor_origem_id(nome)"
       )
-      .eq("status", "Pendente")
       .order("criado_em", { ascending: false });
     if (setorId) q = q.eq("setor_encontrado_id", setorId);
+    if (status) q = q.eq("status", status);
     const { data, error } = await q;
     if (error) throw error;
     return data || [];
+  },
+
+  async listarFcaPendentes({ setorId } = {}) {
+    return DB.listarFca({ setorId, status: "Pendente" });
+  },
+
+  async buscarRetornoFca(fcaId) {
+    const { data, error } = await supa
+      .from("fca_retorno")
+      .select("*")
+      .eq("fca_id", fcaId)
+      .order("criado_em", { ascending: false })
+      .limit(1);
+    if (error) throw error;
+    return data && data.length ? data[0] : null;
   },
 
   async concluirFca(fcaId, payload) {
